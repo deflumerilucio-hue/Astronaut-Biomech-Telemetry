@@ -26,7 +26,7 @@ The motivating use case is **post-flight rehabilitation of astronauts** affected
 ## Architecture
 
 ```
- Webcam ──► Python vision module ──UDP 127.0.0.1:5006 @ ~30 Hz──► MATLAB HMI
+ Webcam ──► Python vision module ──UDP 127.0.0.1:5006 @ frame rate──► MATLAB HMI
             (OpenCV + MediaPipe Holistic)     payload: "strain,stress_index"
                                                                        │
                                                ┌───────────────────────┴───────────────────────┐
@@ -45,12 +45,14 @@ The two processes are fully decoupled: computer-vision inference runs in Python,
 
 | Signal | How it is computed | What it represents |
 |---|---|---|
-| **Trunk compression proxy (ε)** | Vertical shoulder–hip distance relative to an upright calibration baseline, clamped to a physiological range | A kinematic proxy used to drive the bone model. It is **not** a direct measurement of vertebral strain |
-| **Facial tension index (0–100)** | Normalized Euclidean distance between inner-eyebrow landmarks (MediaPipe Face Mesh) | An exploratory proxy for effort or discomfort during exercise. It is **not** a validated stress measure |
+| **Trunk compression proxy (ε)** | Vertical shoulder–hip distance compared with an upright baseline (`baseline_eretta = 0.634`, normalized image units), linearly scaled and clamped to [0, 0.020] | A kinematic proxy used to drive the bone model. It is **not** a direct measurement of vertebral strain |
+| **Facial tension index (0–100)** | Euclidean distance between inner-eyebrow landmarks 107 and 336 (MediaPipe Face Mesh), linearly mapped and clamped to [0, 100] | An exploratory proxy for effort or discomfort during exercise. It is **not** a validated stress measure |
 
 Payload format: `strain,stress_index` (CSV string), sent through a non-blocking UDP socket.
 
-### 2. MATLAB HMI and solver: `AeroSport_HMI.mlapp`
+### 2. MATLAB HMI and solver: `AeroSport_HMI.mlapp` (private)
+
+> The MATLAB application and the constitutive solver are kept in a private repository. Their design is described below; code access can be discussed for research collaborations.
 
 - **Constitutive model:** 1D non-linear viscoelasticity with an equilibrium and a non-equilibrium stress branch, coupled to a continuum damage variable *d* ∈ [0, 1].
 - **Integration:** predictor–corrector scheme with guards on time-step size (Δt), strain bounds and state variables to keep the solver stable on noisy real-time input.
@@ -74,14 +76,16 @@ Stating these limits explicitly is intentional: they define the next validation 
 ## Getting started
 
 ```bash
-pip install -r requirements.txt   # opencv-python, mediapipe, numpy
+pip install -r requirements.txt   # opencv-python, mediapipe
 ```
 
-1. Open `AeroSport_HMI.mlapp` in MATLAB (R20XX or later).
-2. Press **Start**: the app launches the Python module and begins listening on UDP port 5006.
-3. Stand upright in front of the webcam for the calibration baseline, then move.
+```bash
+python sensore_multimodale.py
+```
 
-<!-- TODO: confirm MATLAB version and any required toolboxes -->
+The module opens the webcam, overlays the skeleton and face mesh with live values, and streams `strain,stress_index` to `127.0.0.1:5006` at the camera frame rate. Any UDP listener on that port can consume the stream (e.g. `nc -ul 5006` to inspect it). Press `ESC` to quit.
+
+The upright baseline depends on camera placement: check the `Dist Raw Tronco` value shown on screen while standing and adjust `baseline_eretta` accordingly.
 
 ---
 
@@ -89,11 +93,9 @@ pip install -r requirements.txt   # opencv-python, mediapipe, numpy
 
 ```
 .
-├── sensore_multimodale.py     # Python vision module
-├── AeroSport_HMI.mlapp        # MATLAB app (HMI + solver)
-├── AeroSport_HMI_export.m     # Readable export of the app code
-├── requirements.txt
-└── assets/                    # Screenshots and demo GIF
+├── sensore_multimodale.py     # Python vision module (public)
+└── requirements.txt
+                               # MATLAB HMI + solver: private
 ```
 
 ---
