@@ -1,348 +1,115 @@
-# Multimodal Space Telemetry & Biomechanical Monitoring System
-**Author:** Lucio De Flumeri  
-**Program:** Master's Degree in Biomedical and Aerospace Engineering (LM-21)  
-**Status:** Public Portfolio Showcase
+# Multimodal Biomechanical Telemetry Prototype
+
+**Real-time vision-to-FEM pipeline for musculoskeletal monitoring, designed with astronaut rehabilitation in mind.**
+
+![Status](https://img.shields.io/badge/status-research%20prototype-orange)
+![Python](https://img.shields.io/badge/Python-OpenCV%20%7C%20MediaPipe-blue)
+![MATLAB](https://img.shields.io/badge/MATLAB-App%20Designer%20%7C%20FEM-orange)
+
+**Author:** Lucio De Flumeri, MSc Biomedical Engineering, Aerospace curriculum (LM-21), Università G. d'Annunzio Chieti-Pescara
 
 ---
 
-## 1. Project Overview
-This repository hosts the architectural framework of an advanced multimodal telemedical system designed for real-time biomechanical and psycho-physical monitoring. Originally developed to support postural and motor rehabilitation, the system's core architecture is tailored for **human spaceflight applications**—specifically targeting the monitoring and rehabilitation of astronauts recovering from microgravity-induced musculoskeletal deconditioning.
+## Overview
 
-The infrastructure bridges **Computer Vision** and **Computational Mechanics** through a decoupled multi-process architecture communicating via local **UDP protocols** at 30 FPS.
+This project couples a **Python computer-vision front-end** with a **MATLAB finite-element back-end** to estimate, in real time, a kinematic loading proxy on the lumbar spine and feed it into a 1D non-linear viscoelastic-damage model of trabecular bone.
+
+The motivating use case is **post-flight rehabilitation of astronauts** affected by microgravity-induced musculoskeletal deconditioning: a low-cost, camera-only setup that links posture to a simulated structural response of bone tissue.
+
+> **Scope.** This is a research and portfolio prototype. It is not a validated medical device and not flight hardware. Outputs are qualitative indicators, not clinical measurements.
+
+<!-- TODO: add a demo GIF here (recommended: 10–15 s screen capture of webcam + MATLAB HMI side by side) -->
+<!-- ![Demo](assets/demo.gif) -->
 
 ---
 
-## 2. System Architecture & Data Flow
+## Architecture
 
-```text
-[Webcam Feed]
-      │
-      ▼
-[Python Vision Module (OpenCV / MediaPipe)]
-      │
-      │ UDP Stream @ 30 FPS
-      ▼
-[MATLAB HMI & FEM Engine]
-      │
-      ├── Trunk Kinematics (L1 Strain)
-      │
-      ├── Facial Micro-Expressions (Stress Index)
-      │
-      ├── 1D Non-Linear Viscoelastic FEM Model
-      │
-      └── Real-Time 3D Structural Rendering
+```
+ Webcam ──► Python vision module ──UDP 127.0.0.1:5006 @ ~30 Hz──► MATLAB HMI
+            (OpenCV + MediaPipe Holistic)     payload: "strain,stress_index"
+                                                                       │
+                                               ┌───────────────────────┴───────────────────────┐
+                                               ▼                                               ▼
+                                     Telemetry buffers                            1D viscoelastic-damage
+                                     (sliding window, live plots)                 FEM solver + 3D rendering
 ```
 
-### Module 1: Python Virtual Sensor (`sensore_multimodale.py`)
+The two processes are fully decoupled: computer-vision inference runs in Python, numerical computation runs in MATLAB, and the only interface between them is a lightweight UDP stream. The MATLAB app launches and terminates the Python process itself.
 
-- **Frameworks:** OpenCV, MediaPipe Holistic, Python Sockets.
-- **Functionality:** Operates as a real-time virtual sensor extracting skeletal and facial landmarks.
+---
 
-#### Trunk Kinematics → Strain ($\epsilon$)
+## Modules
 
-Tracks shoulder and hip vertical coordinates to compute relative torso compression against an upright baseline.
+### 1. Python vision module: `sensore_multimodale.py`
 
-A physiological clamping mechanism is applied to estimate microstructural strain on the L1 lumbar vertebra.
+| Signal | How it is computed | What it represents |
+|---|---|---|
+| **Trunk compression proxy (ε)** | Vertical shoulder–hip distance relative to an upright calibration baseline, clamped to a physiological range | A kinematic proxy used to drive the bone model. It is **not** a direct measurement of vertebral strain |
+| **Facial tension index (0–100)** | Normalized Euclidean distance between inner-eyebrow landmarks (MediaPipe Face Mesh) | An exploratory proxy for effort or discomfort during exercise. It is **not** a validated stress measure |
 
-#### Facial Stress Index
+Payload format: `strain,stress_index` (CSV string), sent through a non-blocking UDP socket.
 
-Isolates inner eyebrow landmarks using the MediaPipe face mesh to quantify acute psychological or physical stress through Euclidean distance variations.
+### 2. MATLAB HMI and solver: `AeroSport_HMI.mlapp`
 
-The resulting signal is mapped to a standardized **0–100 stress index**.
+- **Constitutive model:** 1D non-linear viscoelasticity with an equilibrium and a non-equilibrium stress branch, coupled to a continuum damage variable *d* ∈ [0, 1].
+- **Integration:** predictor–corrector scheme with guards on time-step size (Δt), strain bounds and state variables to keep the solver stable on noisy real-time input.
+- **Visualization:** sliding-window telemetry plots and a 3D cylinder that deforms with the computed response.
 
-#### Communication
+<!-- TODO: add the constitutive equations actually implemented (stress decomposition, evolution law of d). This is the most convincing section for a technical reviewer. -->
 
-Streams lightweight comma-separated telemetry payloads:
+---
 
-```text
-strain,stress_index
+## Assumptions and limitations
+
+- The camera gives 2D landmarks only: out-of-plane motion and camera distance affect the compression proxy.
+- The mapping from trunk kinematics to vertebral loading is a modelling assumption, not a validated biomechanical relation.
+- Material parameters come from the literature on trabecular bone and have not been fitted to subject-specific data.
+- The facial index is sensitive to lighting, head pose and individual anatomy.
+
+Stating these limits explicitly is intentional: they define the next validation steps.
+
+---
+
+## Getting started
+
+```bash
+pip install -r requirements.txt   # opencv-python, mediapipe, numpy
 ```
 
-via a non-blocking local UDP socket:
+1. Open `AeroSport_HMI.mlapp` in MATLAB (R20XX or later).
+2. Press **Start**: the app launches the Python module and begins listening on UDP port 5006.
+3. Stand upright in front of the webcam for the calibration baseline, then move.
 
-```text
-127.0.0.1:5006
+<!-- TODO: confirm MATLAB version and any required toolboxes -->
+
+---
+
+## Repository structure
+
 ```
-
-The architecture is designed to minimize communication overhead and support low-latency real-time transmission.
-
----
-
-### Module 2: MATLAB HMI & Structural Solver (`AeroSport_HMI.mlapp`)
-
-- **Environment:** MATLAB App Designer
-- **Numerical Engine:** Custom FEM Solvers
-
-#### Process Orchestration
-
-Spawns and manages the background Python vision process using system hooks, maintaining a clear separation between computer-vision processing and numerical computation.
-
-#### 1D Non-Linear FEM Engine
-
-Implements predictor-corrector iterations for viscoelastic material behavior and continuous damage mechanics ($d$).
-
-The solver evaluates equilibrium and non-equilibrium stress components while accounting for trabecular bone degradation under compressive loading conditions.
-
-#### Dynamic Visualization
-
-Features:
-
-- Sliding-window telemetry buffers
-- Memory-managed real-time data handling
-- Live numerical monitoring
-- Real-time 3D cylinder deformation
-- Synchronization between incoming kinematic telemetry and structural simulation
-
----
-
-## 3. Key Engineering Highlights
-
-### Multi-Process Decoupling
-
-Asynchronous separation between computationally intensive AI/computer-vision inference in Python and numerical finite-element computation in MATLAB.
-
-This architecture provides clear module boundaries and facilitates independent development, testing, and optimization.
-
-### Robust Error Handling
-
-Algorithmic constraints are applied to:
-
-- Time-step variations ($\Delta t$)
-- Strain limits
-- Telemetry validation
-- Numerical state variables
-
-These mechanisms reduce the risk of matrix instability, numerical overflow, and unrealistic real-time states.
-
-### Systems Engineering Approach
-
-The project follows a systems-oriented architecture based on:
-
-- Functional decomposition
-- Explicit interface definition
-- Modular software boundaries
-- Real-time telemetry management
-- Computational separation of concerns
-- Numerical stability considerations
-- Memory-managed data streams
-
----
-
-## 4. Technology Stack
-
-| Domain | Technology |
-|---|---|
-| Computer Vision | Python, OpenCV, MediaPipe |
-| Communication | UDP / Python Sockets |
-| Numerical Computing | MATLAB |
-| GUI | MATLAB App Designer |
-| Structural Modeling | Custom FEM Solver |
-| Biomechanics | Musculoskeletal / Trabecular Bone Modeling |
-| Real-Time Processing | Multi-process architecture |
-| Data Handling | Sliding-window telemetry buffers |
-| Hardware Interface | Webcam / Virtual Sensors |
-
----
-
-## 5. System-Level Concept
-
-```text
-                    ┌─────────────────────┐
-                    │     HUMAN USER      │
-                    │  / ASTRONAUT MODEL  │
-                    └──────────┬──────────┘
-                               │
-                               ▼
-                    ┌─────────────────────┐
-                    │    WEBCAM SENSOR    │
-                    └──────────┬──────────┘
-                               │
-                               ▼
-              ┌────────────────────────────────┐
-              │     PYTHON VIRTUAL SENSOR      │
-              │                                │
-              │  OpenCV + MediaPipe Holistic  │
-              │                                │
-              │  • Skeletal Landmarks         │
-              │  • Facial Landmarks            │
-              │  • Kinematic Extraction        │
-              │  • Stress Index                │
-              └───────────────┬────────────────┘
-                              │
-                              │ UDP @ 30 FPS
-                              ▼
-              ┌────────────────────────────────┐
-              │       MATLAB INTERFACE         │
-              │                                │
-              │       AeroSport_HMI            │
-              └───────────────┬────────────────┘
-                              │
-                ┌─────────────┴─────────────┐
-                ▼                           ▼
-      ┌──────────────────┐       ┌────────────────────┐
-      │ TELEMETRY ENGINE │       │   FEM SOLVER       │
-      │                  │       │                    │
-      │ Strain           │       │ Non-Linear Model   │
-      │ Stress Index     │       │ Viscoelasticity    │
-      │ Time Series      │       │ Damage Mechanics   │
-      └────────┬─────────┘       └─────────┬──────────┘
-               │                           │
-               └─────────────┬─────────────┘
-                             ▼
-                  ┌──────────────────────┐
-                  │ REAL-TIME 3D MODEL   │
-                  │                      │
-                  │ Structural Response  │
-                  │ Telemetry Feedback   │
-                  └──────────────────────┘
-```
-
----
-
-## 6. Human Spaceflight Application
-
-The architecture can be conceptually extended to **human spaceflight biomedical monitoring**.
-
-Potential applications include:
-
-- Monitoring musculoskeletal deconditioning during and after microgravity exposure
-- Real-time biomechanical assessment
-- Astronaut rehabilitation
-- Wearable physiological sensing
-- Crew health telemetry
-- Human-machine interfaces
-- Biomedical digital twins
-- Structural response monitoring
-- AI-assisted anomaly detection
-- Ground-based astronaut rehabilitation systems
-
-The current implementation is a **research and portfolio prototype**, not a flight-certified medical or aerospace system.
-
----
-
-## 7. Systems Engineering Perspective
-
-The project is intentionally structured around a systems engineering philosophy.
-
-### Input
-
-```text
-Human / Sensor Data
-        ↓
-Kinematic & Physiological Parameters
-```
-
-### Processing
-
-```text
-Data Acquisition
-        ↓
-Signal Extraction
-        ↓
-Telemetry Transmission
-        ↓
-Numerical Modeling
-        ↓
-Structural / Biomechanical Analysis
-```
-
-### Output
-
-```text
-Real-Time Telemetry
-        +
-Biomechanical State Estimation
-        +
-Structural Response
-        ↓
-Human-Machine Interface
-```
-
-The architecture demonstrates the integration of heterogeneous engineering domains within a single real-time system.
-
----
-
-## 8. Future Development
-
-Potential future iterations include:
-
-- Integration of wearable IMUs
-- ECG / EMG acquisition
-- SpO₂ and heart-rate monitoring
-- Multi-sensor fusion
-- Embedded hardware implementation
-- Python-based numerical backend
-- ROS 2 integration
-- Real-time physiological telemetry
-- Machine-learning-based anomaly detection
-- Digital-twin architecture
-- Hardware-in-the-loop testing
-- Automated requirements verification
-- Fault detection and isolation
-- Aerospace-grade communication interfaces
-
----
-
-## 9. Repository Structure
-
-```text
 .
-├── sensore_multimodale.py
-├── AeroSport_HMI.mlapp
-├── README.md
-│
-├── /models
-│   └── biomechanical_models
-│
-├── /data
-│   └── sample_telemetry
-│
-├── /docs
-│   └── system_architecture
-│
-└── /assets
-    └── figures
+├── sensore_multimodale.py     # Python vision module
+├── AeroSport_HMI.mlapp        # MATLAB app (HMI + solver)
+├── AeroSport_HMI_export.m     # Readable export of the app code
+├── requirements.txt
+└── assets/                    # Screenshots and demo GIF
 ```
 
 ---
 
-## 10. Engineering Value
+## Roadmap
 
-This project demonstrates practical experience in:
-
-- **Systems Engineering**
-- **Biomedical Engineering**
-- **Aerospace-oriented system architecture**
-- **Computer Vision**
-- **Biomechanical modeling**
-- **Finite Element Methods**
-- **Real-time telemetry**
-- **Multi-process software architecture**
-- **Numerical simulation**
-- **Human-machine interfaces**
-- **Sensor integration**
-- **Python ↔ MATLAB interoperability**
-
-The main engineering objective is the integration of heterogeneous computational modules into a coherent real-time monitoring architecture.
+- [ ] Replace the webcam proxy with wearable IMUs and compare the two signals
+- [ ] Validate the compression proxy against a reference motion-capture recording
+- [ ] Port the solver to Python to remove the MATLAB dependency
+- [ ] Integrate the variational viscoelastic-plastic-damage bone model from my BSc thesis
 
 ---
 
-## 11. Portfolio Disclaimer
+## Author
 
-This repository is intended as a **technical portfolio and systems engineering demonstration**.
+**Lucio De Flumeri**, Aerospace Biomedical Engineering, computational biomechanics of bone in microgravity
+[LinkedIn](https://www.linkedin.com/in/lucio-de-flumeri/) · deflumerilucio@gmail.com
 
-It does not represent a flight-certified aerospace or medical system.
-
-Advanced proprietary algorithms, research data, and restricted implementation details are intentionally omitted from the public repository.
-
----
-
-## 12. Author
-
-**Lucio De Flumeri**
-
-Biomedical & Aerospace Engineering  
-Systems Engineering • Human Spaceflight • Biomedical Systems • Computational Biomechanics
-
----
-```
+Feedback and collaboration proposals are welcome.
